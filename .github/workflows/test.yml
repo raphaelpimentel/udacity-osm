@@ -1,0 +1,40 @@
+name: Test Workflow
+
+# Este workflow pode ser acionado de três formas:
+on:
+  # 1. Quando você fizer push para qualquer branch
+  push:
+    branches: [ "**" ]
+
+  # 2. Quando criar um pull request
+  pull_request:
+    branches: [ "**" ]
+
+  # 3. Manualmente através da interface do GitHub
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout do código
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Exibir informações do ambiente
+      run: |
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Evento: ${{ github.event_name }}"
+        echo "Python version: $(python --version)"
+        echo "Repositório: ${{ github.repository }}"
+
+    - name: Listar arquivos
+      run: ls -la
+
+    - name: Teste simples
+      run: echo "✅ Workflow executado com sucesso!"
