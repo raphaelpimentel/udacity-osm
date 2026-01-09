@@ -1,0 +1,163 @@
+{
+  "name": "Vespucio Scrape Post - TESTE (Sem Supabase)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vespucio-scrape-post-test",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "vespucio-scrape-post-test"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extrai URL do webhook\nconst url = $input.item.json.body.url || $input.item.json.url;\n\nif (!url) {\n  throw new Error('URL é obrigatória');\n}\n\nreturn {\n  post_url: url\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.post_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "fetch-html",
+      "name": "Fetch HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "functionCode": "const cheerio = require('cheerio');\nconst html = $input.item.json.data;\n\nif (!html) {\n  return {\n    error: 'HTML vazio ou inválido',\n    url: $('Validate Input').item.json.post_url\n  };\n}\n\nconst $ = cheerio.load(html);\n\n// Extrai title\nconst title = $('title').text().trim() || \n              $('meta[property=\"og:title\"]').attr('content') || \n              $('h1').first().text().trim() || \n              'Sem título';\n\n// Conta imagens\nconst num_images = $('img').length;\n\n// Conta vídeos\nconst num_videos = $('video').length + \n                   $('iframe[src*=\"youtube\"]').length + \n                   $('iframe[src*=\"vimeo\"]').length + \n                   $('iframe[src*=\"youtu.be\"]').length;\n\n// Conta links\nconst post_url = $('Validate Input').item.json.post_url;\nconst base_domain = new URL(post_url).hostname;\n\nlet num_links_internal = 0;\nlet num_links_external = 0;\n\n$('a[href]').each((i, elem) => {\n  const href = $(elem).attr('href');\n  if (!href) return;\n  \n  try {\n    if (href.startsWith('/') || href.startsWith('#')) {\n      num_links_internal++;\n    } else if (href.startsWith('http')) {\n      const linkDomain = new URL(href).hostname;\n      if (linkDomain === base_domain) {\n        num_links_internal++;\n      } else {\n        num_links_external++;\n      }\n    }\n  } catch (e) {\n    // Ignora links inválidos\n  }\n});\n\n// Extrai texto para análise\nconst bodyText = $('article').text() || \n                 $('main').text() || \n                 $('body').text();\nconst textPreview = bodyText.replace(/\\s+/g, ' ').trim().slice(0, 500);\n\nreturn {\n  url: post_url,\n  title: title,\n  num_images: num_images,\n  num_videos: num_videos,\n  num_links_internal: num_links_internal,\n  num_links_external: num_links_external,\n  text_preview: textPreview,\n  html_size: html.length,\n  success: true\n};"
+      },
+      "id": "extract-data",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "return {\n  success: false,\n  error: 'Falha ao fazer scraping',\n  url: $('Validate Input').item.json.post_url\n};"
+      },
+      "id": "prepare-error",
+      "name": "Prepare Error",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}"
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch HTML": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-09T00:00:00.000Z",
+  "versionId": "1"
+}
