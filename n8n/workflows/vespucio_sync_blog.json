@@ -1,0 +1,827 @@
+{
+  "name": "Vespucio Sync Blog",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vespucio-sync-blog",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "vespucio-sync-blog"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extrai dados do webhook\nconst blog_id = $input.item.json.body.blog_id;\nconst user_id = $input.item.json.body.user_id;\n\nif (!blog_id || !user_id) {\n  throw new Error('blog_id e user_id são obrigatórios');\n}\n\nreturn {\n  blog_id,\n  user_id\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/blogs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.blog_id }}"
+            },
+            {
+              "name": "user_id",
+              "value": "=eq.{{ $json.user_id }}"
+            },
+            {
+              "name": "select",
+              "value": "id,user_id,base_url,status"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-blog",
+      "name": "Get Blog",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.length }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-blog-exists",
+      "name": "Check Blog Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": \"Blog não encontrado ou não pertence ao usuário\" } }}"
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/blogs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json[0].id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "syncing"
+            },
+            {
+              "name": "last_synced_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        },
+        "method": "PATCH"
+      },
+      "id": "set-syncing",
+      "name": "Set Status Syncing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const blog = $input.item.json[0];\nconst base_url = blog.base_url.replace(/\\/$/, '');\n\nreturn {\n  blog_id: blog.id,\n  user_id: blog.user_id,\n  base_url: base_url,\n  sitemap_urls: [\n    `${base_url}/sitemap_index.xml`,\n    `${base_url}/sitemap.xml`,\n    `${base_url}/robots.txt`\n  ]\n};"
+      },
+      "id": "prepare-sitemap-discovery",
+      "name": "Prepare Sitemap Discovery",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.sitemap_urls[0] }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "try-sitemap-index",
+      "name": "Try Sitemap Index",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.sitemap_urls[1] }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "try-sitemap-xml",
+      "name": "Try Sitemap XML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.sitemap_urls[2] }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 10000
+        }
+      },
+      "id": "try-robots-txt",
+      "name": "Try Robots TXT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-sitemap-results",
+      "name": "Merge Sitemap Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const items = $input.all();\nconst cheerio = require('cheerio');\n\nconst blog_id = items[0].json.blog_id;\nconst user_id = items[0].json.user_id;\nconst base_url = items[0].json.base_url;\n\nlet allUrls = [];\n\n// Tenta parsear cada resposta\nfor (const item of items) {\n  try {\n    const data = item.json.data;\n    if (!data) continue;\n    \n    // Se for sitemap XML\n    if (data.includes('<?xml') && data.includes('<urlset')) {\n      const $ = cheerio.load(data, { xmlMode: true });\n      $('url > loc').each((i, elem) => {\n        allUrls.push($(elem).text());\n      });\n    }\n    \n    // Se for sitemap index\n    if (data.includes('<?xml') && data.includes('<sitemapindex')) {\n      const $ = cheerio.load(data, { xmlMode: true });\n      $('sitemap > loc').each((i, elem) => {\n        allUrls.push($(elem).text());\n      });\n    }\n    \n    // Se for robots.txt\n    if (data.includes('Sitemap:')) {\n      const lines = data.split('\\n');\n      for (const line of lines) {\n        if (line.toLowerCase().startsWith('sitemap:')) {\n          const url = line.split(':', 2)[1].trim();\n          allUrls.push(url);\n        }\n      }\n    }\n  } catch (e) {\n    console.log('Erro ao parsear:', e.message);\n  }\n}\n\n// Remove duplicatas\nallUrls = [...new Set(allUrls)];\n\n// Filtra apenas posts (heurística: URLs com path maior que /)\nconst postUrls = allUrls.filter(url => {\n  try {\n    const path = new URL(url).pathname;\n    return path.split('/').filter(p => p).length > 0;\n  } catch {\n    return false;\n  }\n});\n\nreturn {\n  blog_id,\n  user_id,\n  base_url,\n  discovered_urls: postUrls,\n  total_found: postUrls.length\n};"
+      },
+      "id": "parse-sitemaps",
+      "name": "Parse Sitemaps",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "blog_id",
+              "value": "=eq.{{ $json.blog_id }}"
+            },
+            {
+              "name": "select",
+              "value": "url"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-existing-posts",
+      "name": "Get Existing Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const discovered = $input.first().json.discovered_urls || [];\nconst existing = $input.last().json.map(p => p.url);\n\n// Diff: URLs novas\nconst newUrls = discovered.filter(url => !existing.includes(url));\n\nconst blog_id = $input.first().json.blog_id;\nconst user_id = $input.first().json.user_id;\n\nreturn {\n  blog_id,\n  user_id,\n  new_urls: newUrls,\n  total_new: newUrls.length\n};"
+      },
+      "id": "diff-posts",
+      "name": "Diff Posts",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.total_new }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-new-posts",
+      "name": "Check New Posts",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const blog_id = $json.blog_id;\nconst user_id = $json.user_id;\nconst new_urls = $json.new_urls;\n\n// Cria array de posts para inserir\nconst posts = new_urls.map(url => ({\n  blog_id,\n  user_id,\n  url,\n  status: 'pending',\n  created_at: new Date().toISOString()\n}));\n\nreturn { posts };"
+      },
+      "id": "prepare-insert",
+      "name": "Prepare Insert",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2880, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.posts) }}",
+        "options": {},
+        "method": "POST"
+      },
+      "id": "insert-new-posts",
+      "name": "Insert New Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [3100, 200]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-after-insert",
+      "name": "Merge After Insert",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [3320, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "blog_id",
+              "value": "=eq.{{ $json.blog_id }}"
+            },
+            {
+              "name": "status",
+              "value": "in.(pending,partial)"
+            },
+            {
+              "name": "select",
+              "value": "id,url"
+            },
+            {
+              "name": "limit",
+              "value": "50"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "get-pending-posts",
+      "name": "Get Pending Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [3540, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-batches",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [3760, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.N8N_WEBHOOK_BASE_URL }}/webhook/vespucio-scrape-post",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ id: $json.id, url: $json.url }) }}",
+        "options": {
+          "timeout": 30000
+        },
+        "method": "POST"
+      },
+      "id": "call-scraper",
+      "name": "Call Scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [3980, 300]
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "wait-between-scrapes",
+      "name": "Wait Between Scrapes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [4200, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/blogs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $('Prepare Sitemap Discovery').item.json.blog_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "ok"
+            },
+            {
+              "name": "last_synced_at",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "options": {},
+        "method": "PATCH"
+      },
+      "id": "set-status-ok",
+      "name": "Set Status OK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [4420, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"blog_id\": $json[0].id, \"status\": $json[0].status, \"message\": \"Sync concluído com sucesso\" } }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [4640, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Get Blog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Blog": {
+      "main": [
+        [
+          {
+            "node": "Check Blog Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Blog Exists": {
+      "main": [
+        [
+          {
+            "node": "Set Status Syncing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Syncing": {
+      "main": [
+        [
+          {
+            "node": "Prepare Sitemap Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Sitemap Discovery": {
+      "main": [
+        [
+          {
+            "node": "Try Sitemap Index",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Try Sitemap XML",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Try Robots TXT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Try Sitemap Index": {
+      "main": [
+        [
+          {
+            "node": "Merge Sitemap Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Try Sitemap XML": {
+      "main": [
+        [
+          {
+            "node": "Merge Sitemap Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Try Robots TXT": {
+      "main": [
+        [
+          {
+            "node": "Merge Sitemap Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge Sitemap Results": {
+      "main": [
+        [
+          {
+            "node": "Parse Sitemaps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Sitemaps": {
+      "main": [
+        [
+          {
+            "node": "Get Existing Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing Posts": {
+      "main": [
+        [
+          {
+            "node": "Diff Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Diff Posts": {
+      "main": [
+        [
+          {
+            "node": "Check New Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check New Posts": {
+      "main": [
+        [
+          {
+            "node": "Prepare Insert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge After Insert",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Prepare Insert": {
+      "main": [
+        [
+          {
+            "node": "Insert New Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert New Posts": {
+      "main": [
+        [
+          {
+            "node": "Merge After Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge After Insert": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Posts": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Call Scraper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Status OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Scraper": {
+      "main": [
+        [
+          {
+            "node": "Wait Between Scrapes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Between Scrapes": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status OK": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-09T00:00:00.000Z",
+  "versionId": "1"
+}

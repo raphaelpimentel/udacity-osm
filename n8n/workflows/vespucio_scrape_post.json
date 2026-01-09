@@ -1,0 +1,500 @@
+{
+  "name": "Vespucio Scrape Post",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vespucio-scrape-post",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "vespucio-scrape-post"
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extrai dados do webhook\nconst id = $input.item.json.body.id;\nconst url = $input.item.json.body.url;\n\nif (!id || !url) {\n  throw new Error('id e url são obrigatórios');\n}\n\nreturn {\n  post_id: id,\n  post_url: url\n};"
+      },
+      "id": "validate-input",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.post_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "processing"
+            }
+          ]
+        },
+        "options": {},
+        "method": "PATCH"
+      },
+      "id": "set-processing",
+      "name": "Set Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Validate Input').item.json.post_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 15000,
+          "retry": {
+            "retry": {
+              "maxRetries": 3,
+              "retryOnHttpCode": "4xx,5xx"
+            }
+          }
+        }
+      },
+      "id": "fetch-html",
+      "name": "Fetch HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [900, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "functionCode": "const cheerio = require('cheerio');\nconst html = $input.item.json.data;\n\nif (!html) {\n  throw new Error('HTML vazio ou inválido');\n}\n\nconst $ = cheerio.load(html);\n\n// Extrai title\nconst title = $('title').text().trim() || \n              $('meta[property=\"og:title\"]').attr('content') || \n              $('h1').first().text().trim() || \n              'Sem título';\n\n// Conta imagens\nconst num_images = $('img').length;\n\n// Conta vídeos (iframe YouTube, Vimeo, video tags)\nconst num_videos = $('video').length + \n                   $('iframe[src*=\"youtube\"]').length + \n                   $('iframe[src*=\"vimeo\"]').length + \n                   $('iframe[src*=\"youtu.be\"]').length;\n\n// Conta links\nconst post_url = $('Validate Input').item.json.post_url;\nconst base_domain = new URL(post_url).hostname;\n\nlet num_links_internal = 0;\nlet num_links_external = 0;\n\n$('a[href]').each((i, elem) => {\n  const href = $(elem).attr('href');\n  if (!href) return;\n  \n  try {\n    // Links relativos ou mesma domain = interno\n    if (href.startsWith('/') || href.startsWith('#')) {\n      num_links_internal++;\n    } else if (href.startsWith('http')) {\n      const linkDomain = new URL(href).hostname;\n      if (linkDomain === base_domain) {\n        num_links_internal++;\n      } else {\n        num_links_external++;\n      }\n    }\n  } catch (e) {\n    // Ignora links inválidos\n  }\n});\n\n// Extrai texto para IA (primeiros 3000 chars)\nconst bodyText = $('article').text() || \n                 $('main').text() || \n                 $('body').text();\nconst textForAI = bodyText.replace(/\\s+/g, ' ').trim().slice(0, 3000);\n\nreturn {\n  post_id: $('Validate Input').item.json.post_id,\n  post_url: post_url,\n  title: title,\n  num_images: num_images,\n  num_videos: num_videos,\n  num_links_internal: num_links_internal,\n  num_links_external: num_links_external,\n  text_for_ai: textForAI\n};"
+      },
+      "id": "extract-data",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.text_for_ai.length }}",
+              "rightValue": "100",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-content",
+      "name": "Check Content",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Se conteúdo insuficiente, marca como partial\nreturn {\n  ...$json,\n  category: 'uncategorized',\n  summary: 'Conteúdo insuficiente para análise',\n  final_status: 'partial'\n};"
+      },
+      "id": "set-partial",
+      "name": "Set Partial",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "key",
+              "value": "={{ $env.GEMINI_API_KEY }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contents: [{\n    parts: [{\n      text: `Analise este texto de um post de blog e retorne APENAS um JSON válido (sem markdown, sem explicações) com esta estrutura exata:\\n{\\n  \\\"category\\\": \\\"categoria principal (ex: technology, travel, food, business, health, lifestyle, etc)\\\",\\n  \\\"summary\\\": \\\"resumo em 1-2 frases\\\"\\n}\\n\\nTexto do post:\\n${$json.text_for_ai}`\n    }]\n  }],\n  generationConfig: {\n    temperature: 0.3,\n    maxOutputTokens: 200\n  }\n}) }}",
+        "options": {
+          "timeout": 15000
+        },
+        "method": "POST"
+      },
+      "id": "call-gemini",
+      "name": "Call Gemini AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 200],
+      "continueOnFail": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "functionCode": "const postData = $input.first().json;\nconst aiResponse = $input.last().json;\n\nlet category = 'uncategorized';\nlet summary = 'Análise pendente';\nlet final_status = 'done';\n\ntry {\n  // Tenta extrair resposta da IA\n  if (aiResponse && aiResponse.candidates && aiResponse.candidates[0]) {\n    const aiText = aiResponse.candidates[0].content.parts[0].text;\n    \n    // Remove markdown code blocks se houver\n    const cleanText = aiText.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n    \n    const aiData = JSON.parse(cleanText);\n    category = aiData.category || 'uncategorized';\n    summary = aiData.summary || 'Sem resumo';\n  } else {\n    // IA falhou, marca como partial\n    final_status = 'partial';\n    summary = 'Falha na análise de IA';\n  }\n} catch (e) {\n  // Erro ao parsear IA\n  final_status = 'partial';\n  category = 'uncategorized';\n  summary = 'Erro ao processar análise de IA';\n}\n\nreturn {\n  post_id: postData.post_id,\n  post_url: postData.post_url,\n  title: postData.title,\n  num_images: postData.num_images,\n  num_videos: postData.num_videos,\n  num_links_internal: postData.num_links_internal,\n  num_links_external: postData.num_links_external,\n  category: category,\n  summary: summary,\n  final_status: final_status\n};"
+      },
+      "id": "merge-ai-data",
+      "name": "Merge AI Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.post_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  title: $json.title,\n  category: $json.category,\n  num_images: $json.num_images,\n  num_videos: $json.num_videos,\n  num_links_internal: $json.num_links_internal,\n  num_links_external: $json.num_links_external,\n  summary: $json.summary,\n  status: $json.final_status,\n  updated_at: new Date().toISOString()\n}) }}",
+        "options": {},
+        "method": "PATCH"
+      },
+      "id": "update-post",
+      "name": "Update Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"post_id\": $json[0].id, \"status\": $json[0].status, \"title\": $json[0].title } }}"
+      },
+      "id": "success-response",
+      "name": "Success Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const post_id = $('Validate Input').item.json.post_id;\nconst error = $json.error || $json.message || 'Erro desconhecido';\n\nreturn {\n  post_id: post_id,\n  error_message: error\n};"
+      },
+      "id": "prepare-error",
+      "name": "Prepare Error",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "=eq.{{ $json.post_id }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_ANON_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  status: 'error',\n  summary: $json.error_message,\n  updated_at: new Date().toISOString()\n}) }}",
+        "options": {},
+        "method": "PATCH"
+      },
+      "id": "set-error",
+      "name": "Set Error Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": $json.error_message } }}"
+      },
+      "id": "error-response",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [
+          {
+            "node": "Set Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Processing": {
+      "main": [
+        [
+          {
+            "node": "Fetch HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch HTML": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Check Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Content": {
+      "main": [
+        [
+          {
+            "node": "Call Gemini AI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Partial",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Partial": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Call Gemini AI": {
+      "main": [
+        [
+          {
+            "node": "Merge AI Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge AI Data": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Update Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Post": {
+      "main": [
+        [
+          {
+            "node": "Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Error": {
+      "main": [
+        [
+          {
+            "node": "Set Error Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Error Status": {
+      "main": [
+        [
+          {
+            "node": "Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-09T00:00:00.000Z",
+  "versionId": "1"
+}
