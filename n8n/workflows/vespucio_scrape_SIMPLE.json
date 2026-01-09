@@ -1,0 +1,118 @@
+{
+  "name": "Vespucio Scrape - SIMPLES (Sem Cheerio)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "scrape-simple",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "scrape-simple"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.body.url || $json.url }}",
+        "options": {}
+      },
+      "id": "fetch-html",
+      "name": "Buscar HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "sourceData": "={{ $json.data }}",
+        "options": {}
+      },
+      "id": "extract-html",
+      "name": "Extrair HTML",
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extrai dados do HTML usando regex\nconst html = $input.item.json.data || '';\nconst url = $('Webhook').item.json.body.url || $('Webhook').item.json.url;\n\n// Extrai title\nconst titleMatch = html.match(/<title[^>]*>([^<]+)<\\/title>/i);\nconst ogTitleMatch = html.match(/<meta[^>]*property=[\"']og:title[\"'][^>]*content=[\"']([^\"']+)[\"']/i);\nconst h1Match = html.match(/<h1[^>]*>([^<]+)<\\/h1>/i);\n\nconst title = (titleMatch && titleMatch[1]) ||\n              (ogTitleMatch && ogTitleMatch[1]) ||\n              (h1Match && h1Match[1]) ||\n              'Sem título';\n\n// Conta imagens\nconst imgMatches = html.match(/<img[^>]*>/gi) || [];\nconst num_images = imgMatches.length;\n\n// Conta vídeos\nconst videoMatches = html.match(/<video[^>]*>/gi) || [];\nconst iframeYoutubeMatches = html.match(/<iframe[^>]*youtube[^>]*>/gi) || [];\nconst iframeVimeoMatches = html.match(/<iframe[^>]*vimeo[^>]*>/gi) || [];\nconst num_videos = videoMatches.length + iframeYoutubeMatches.length + iframeVimeoMatches.length;\n\n// Conta links\nconst linkMatches = html.match(/<a[^>]*href=[\"']([^\"']+)[\"'][^>]*>/gi) || [];\n\nlet num_links_internal = 0;\nlet num_links_external = 0;\n\nconst baseDomain = new URL(url).hostname;\n\nfor (const link of linkMatches) {\n  const hrefMatch = link.match(/href=[\"']([^\"']+)[\"']/i);\n  if (!hrefMatch) continue;\n  \n  const href = hrefMatch[1];\n  \n  if (href.startsWith('/') || href.startsWith('#')) {\n    num_links_internal++;\n  } else if (href.startsWith('http')) {\n    try {\n      const linkDomain = new URL(href).hostname;\n      if (linkDomain === baseDomain) {\n        num_links_internal++;\n      } else {\n        num_links_external++;\n      }\n    } catch (e) {\n      // Link inválido, ignora\n    }\n  }\n}\n\n// Remove tags HTML e pega preview do texto\nconst textOnly = html.replace(/<script[^>]*>.*?<\\/script>/gi, '')\n                     .replace(/<style[^>]*>.*?<\\/style>/gi, '')\n                     .replace(/<[^>]+>/g, ' ')\n                     .replace(/\\s+/g, ' ')\n                     .trim();\n\nconst text_preview = textOnly.slice(0, 500);\n\nreturn {\n  url: url,\n  title: title.trim(),\n  num_images: num_images,\n  num_videos: num_videos,\n  num_links_internal: num_links_internal,\n  num_links_external: num_links_external,\n  text_preview: text_preview,\n  html_size: html.length,\n  success: true\n};"
+      },
+      "id": "parse-data",
+      "name": "Analisar Dados",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json, null, 2) }}"
+      },
+      "id": "success-response",
+      "name": "Resposta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Buscar HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar HTML": {
+      "main": [
+        [
+          {
+            "node": "Extrair HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair HTML": {
+      "main": [
+        [
+          {
+            "node": "Analisar Dados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analisar Dados": {
+      "main": [
+        [
+          {
+            "node": "Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-09T00:00:00.000Z",
+  "versionId": "1"
+}
